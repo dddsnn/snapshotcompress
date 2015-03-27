@@ -138,24 +138,60 @@ def compress_delta_cube(cube, configs):
     res += bs.Bits(uint=cube.interacting, length=1)
     return res
 
-def encode_varint(n, config, max_len):
-    # TODO remove overlap
-    # TODO uint version
-    last = False
-    for i, length in enumerate(config):
-        try:
-            bits = bs.Bits(int=n, length=length)
-            config_idx = i
-            break
-        except CreationError:
-            continue
+def encode_varint(n, config, max_len, signed=True):
+    def compute_bounds_signed():
+        # compute the min and max possible value for every setting
+        b = [(-(2 ** (config[0] - 1)), (2 ** (config[0] - 1) - 1))]
+        for i, s in enumerate(config[1:]):
+            prev_bounds = b[i]
+            extension = 2 ** (s - 1)
+            b.append((prev_bounds[0] - extension, prev_bounds[1] + extension))
+        return b
+    def compute_bounds_unsigned():
+        # compute the min and max possible value for every setting
+        b = [(0, (2 ** (config[0]) - 1))]
+        for i, s in enumerate(config[1:]):
+            prev_bounds = b[i]
+            extension = 2 ** s
+            b.append((0, prev_bounds[1] + extension))
+        return b
+
+    if signed:
+        bounds = compute_bounds_signed()
     else:
-        last = True
+        bounds = compute_bounds_unsigned()
+    # go through the bounds list and find the first fitting index
+    for i, b in enumerate(bounds):
+        if n >= b[0] and n <= b[1]:
+            config_idx = i
+            last = False
+            break
+    else:
+        # if none fits, set index to use the full length of bits
         config_idx = len(config)
+        last = True
+    # figure out what number to actually write (avoid overlap, extend the range
+    # a little)
+    if config_idx == 0 or last:
+        num_to_write = n
+    else:
+        if n < 0:
+            num_to_write = n - bounds[config_idx - 1][0]
+        else:
+            num_to_write = n - bounds[config_idx - 1][1] - 1
+    # compute the length to write
+    if not last:
+        length = config[config_idx]
+    else:
+        length = max_len
+    # actually write the damn thing
+    if signed:
         try:
-            bits = bs.Bits(int=n, length=max_len)
+            bits = bs.Bits(int=num_to_write, length=length)
         except CreationError:
-            bits = bs.Bits(uint=n, length=max_len)
+            bits = bs.Bits(uint=num_to_write, length=length)
+    else:
+        bits = bs.Bits(uint=num_to_write, length=length)
     header = bs.BitStream()
     # write config_idx 1s
     header += bs.pack('{0}*bool'.format(config_idx),
@@ -186,31 +222,8 @@ def compress_delta_frame(baseline_frame, current_frame):
     res += encode_varint(changed_deltas[0][0], index_list_config, 10)
     res += compress_delta_cube(changed_deltas[0][1], configs)
     for b, c in zip(changed_deltas[:-1], changed_deltas[1:]):
-        res += encode_varint(c[0] - b[0], index_list_config, 10)
+        res += encode_varint(c[0] - b[0], index_list_config, 10, signed=False)
         res += compress_delta_cube(c[1], configs)
-    return res
-
-def rl_enc(bits):
-    def write_zeros():
-        nonlocal res
-        res += bs.Bits('0b0')
-        x = bs.Bits(ue=zero_count)
-        res += x
-    res = bs.BitStream()
-    zero_count = 0
-    for b in bits:
-        if b:
-            # write zeros first
-            if zero_count:
-                write_zeros()
-                zero_count = 0
-            # just write 1's normally, they're rare
-            res += bs.Bits('0b1')
-        else:
-            zero_count += 1
-    # write any remaining zeros
-    if zero_count:
-        write_zeros()
     return res
 
 if __name__ == '__main__':
