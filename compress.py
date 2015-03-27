@@ -77,7 +77,10 @@ class Cube:
     def interacting(self):
         return self.values[7]
 
-class Delta(Cube):
+    def __iter__(self):
+        return self.values.__iter__()
+
+class DeltaCube(Cube):
     def __init__(self, baseline, current):
         self._values = list(map(lambda x:x[1] - x[0],
                           zip(baseline.values, current.values)))
@@ -108,9 +111,12 @@ def rl_enc(bits):
         write_zeros()
     return res
 
-def compress_delta(baseline, current):
+def compress_frame_delta(baseline_frame, current_frame):
     res = bs.BitStream()
-#     deltas = [Cube(bts,0) for bts in ]
+    deltas = [DeltaCube(baseline, current)
+              for baseline, current in zip(baseline_frame, current_frame)]
+    num_changed = sum(1 for d in deltas if any(d))
+    print(num_changed)
 
 if __name__ == '__main__':
     filename = '/home/dddsnn/Downloads/delta_data.bin'
@@ -118,7 +124,8 @@ if __name__ == '__main__':
 #     frame = data[100]
 #     print(sum(1 for frame in data[6:20] for cube in frame if not cube.position_x))
 #     print(min(cube.orientation_a for frame in data for cube in frame))
-    for baseline_frame, current_frame in zip(data[100:101], data[106:107]):
-        for baseline, current in zip(baseline_frame, current_frame):
-            delta = Delta(baseline, current)
-            print(delta.position_x)
+    for baseline_frame, current_frame in zip(data[100:110], data[106:116]):
+        compress_frame_delta(baseline_frame, current_frame)
+#         for baseline, current in zip(baseline_frame, current_frame):
+#             delta = DeltaCube(baseline, current)
+#             print(delta.position_x)
