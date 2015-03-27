@@ -1,5 +1,6 @@
 import bitstring as bs
 import struct
+from bitstring import CreationError
 
 cubesize = 32
 cubes_per_frame = 901
@@ -82,11 +83,55 @@ class Cube:
 
 class DeltaCube(Cube):
     def __init__(self, baseline, current):
-        self._values = list(map(lambda x:x[1] - x[0],
-                          zip(baseline.values, current.values)))
+        self._values = []
+        # largest orientation index
+        v = current.values[0] - baseline.values[0]
+        if v < -2:
+            v = -v
+        self._values.append(v)
+        # orientation, 9 bit unsigned
+        for i in range(1, 4):
+            v = current.values[i] - baseline.values[i]
+            if v < -(2 ** 8):
+                v = -v
+            self._values.append(v)
+        # position x, y, 18 bit signed
+        for i in range(4, 6):
+            v = current.values[i] - baseline.values[i]
+            if v < -(2 ** 17):
+                v = -v
+            self._values.append(v)
+        # position z, 14 bit unsigned
+        v = current.values[6] - baseline.values[6]
+        if v < -(2 ** 13):
+            v = -v
+        self._values.append(v)
+        # interacting, 0 if same, 1 otherwise
+        self._values.append(abs(current.values[7] - baseline.values[7]))
+
     @property
     def values(self):
         return self._values
+
+    def compressed(self, position_config, orientation_config):
+        res = bs.BitStream()
+        # largest orientation index
+        try:
+            res += bs.Bits(int=self.orientation_largest, length=2)
+        except CreationError:
+            res += bs.Bits(uint=self.orientation_largest, length=2)
+        # orientation
+        for x in (self.orientation_a, self.orientation_b, self.orientation_c):
+                res += varint(x, orientation_config)
+        # position
+        for x in (self.position_x, self.position_y, self.position_z):
+            res += varint(x, position_config)
+        # interacting
+        res += bs.Bits(uint=self.interacting, length=1)
+        return res
+
+def varint(i, config):
+    pass
 
 def rl_enc(bits):
     def write_zeros():
@@ -111,21 +156,22 @@ def rl_enc(bits):
         write_zeros()
     return res
 
-def compress_frame_delta(baseline_frame, current_frame):
+def compress_delta_frame(baseline_frame, current_frame):
     res = bs.BitStream()
     deltas = [DeltaCube(baseline, current)
               for baseline, current in zip(baseline_frame, current_frame)]
     num_changed = sum(1 for d in deltas if any(d))
     print(num_changed)
+#     print(min(d.orientation_a for d in deltas))
 
 if __name__ == '__main__':
     filename = '/home/dddsnn/Downloads/delta_data.bin'
     data = Data(filename)
 #     frame = data[100]
 #     print(sum(1 for frame in data[6:20] for cube in frame if not cube.position_x))
-#     print(min(cube.orientation_a for frame in data for cube in frame))
+#     print(min(cube.position_z for frame in data for cube in frame))
     for baseline_frame, current_frame in zip(data[100:110], data[106:116]):
-        compress_frame_delta(baseline_frame, current_frame)
+        compress_delta_frame(baseline_frame, current_frame)
 #         for baseline, current in zip(baseline_frame, current_frame):
 #             delta = DeltaCube(baseline, current)
 #             print(delta.position_x)
