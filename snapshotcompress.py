@@ -1,5 +1,6 @@
 import bitstring as bs
 import struct
+import itertools
 from bitstring import CreationError
 
 cubesize = 32
@@ -122,16 +123,37 @@ class DeltaCube(Cube):
             res += bs.Bits(uint=self.orientation_largest, length=2)
         # orientation
         for x in (self.orientation_a, self.orientation_b, self.orientation_c):
-                res += varint(x, orientation_config)
+                res += encode_varint(x, orientation_config)
         # position
         for x in (self.position_x, self.position_y, self.position_z):
-            res += varint(x, position_config)
+            res += encode_varint(x, position_config)
         # interacting
         res += bs.Bits(uint=self.interacting, length=1)
         return res
 
-def varint(i, config):
-    pass
+def encode_varint(n, configs):
+    last = False
+    for i, length in enumerate(configs[:-1]):
+        try:
+            bits = bs.Bits(int=n, length=length)
+            config_idx = i
+            break
+        except CreationError:
+            continue
+    else:
+        last = True
+        config_idx = len(configs) - 1
+        try:
+            bits = bs.Bits(int=n, length=configs[-1])
+        except CreationError:
+            bits = bs.Bits(uint=n, length=configs[-1])
+    header = bs.BitStream()
+    # write config_idx 1s
+    header += bs.pack('{0}*bool'.format(config_idx), itertools.repeat(True))
+    # if we're not using the last config, write a 0 to terminate
+    if not last:
+        header += bs.Bits(bool=False)
+    return header + bits
 
 def rl_enc(bits):
     def write_zeros():
