@@ -1,4 +1,9 @@
 import bitstring as bs
+import struct
+
+cubesize = 32
+cubes_per_frame = 901
+framesize = cubesize * cubes_per_frame
 
 class Iter:
     def __init__(self, target, size):
@@ -14,47 +19,71 @@ class Iter:
         return item
 
 class Data:
-    framesize = 901 * 32 * 8
     def __init__(self, filename):
-        self.bits = bs.Bits(filename=filename)
-        self.num_frames = len(self.bits) // (self.framesize)
-        self.frames = [None for _ in range(self.num_frames)]
+        with open(filename, 'rb') as f:
+            self.bts = f.read()
+        self.frames = [Frame(self.bts, i)
+                       for i in range(0, len(self.bts), framesize)]
+        self.num_frames = len(self.frames)
 
     def __getitem__(self, i):
-        if not self.frames[i]:
-            self.frames[i] = Frame(self.bits[i * self.framesize:
-                                             (i + 1) * self.framesize])
         return self.frames[i]
 
     def __iter__(self):
-        return Iter(self, self.framesize)
+        return Iter(self, self.num_frames)
 
 class Frame:
-    cubesize = 32 * 8
-    num_cubes = 901
-    def __init__(self, bits):
-        self.bits = bits
-        self.cubes = [None for _ in range(self.num_cubes)]
+    def __init__(self, bts, offset):
+        self.cubes = [Cube(bts, i)
+                      for i in range(offset, offset + framesize, cubesize)]
 
     def __getitem__(self, i):
-        if not self.cubes[i]:
-            self.cubes[i] = Cube(self.bits[i * self.cubesize:
-                                           (i + 1) * self.cubesize])
         return self.cubes[i]
 
     def __iter__(self):
-        return Iter(self, self.num_cubes)
+        return Iter(self, cubes_per_frame)
 
 class Cube:
-    def __init__(self, bits):
-        self.orientation_largest = bits[:32]
-        self.orientation_a = bits[32:64]
-        self.orientation_b = bits[64:96]
-        self.orientation_c = bits[96:128]
-        self.position_x = bits[128:160]
-        self.position_y = bits[160:192]
-        self.position_z = bits[192:224]
-        self.interacting = bits[224:256]
+    def __init__(self, bts, offset):
+        self.bts = bts
+        self.offset = offset
+
+    @property
+    def values(self):
+        return struct.unpack('<iiiiiiii',
+                             self.bts[self.offset:self.offset + cubesize])
+    @property
+    def orientation_largest(self):
+        return self.values[0]
+    @property
+    def orientation_a(self):
+        return self.values[1]
+    @property
+    def orientation_b(self):
+        return self.values[2]
+    @property
+    def orientation_c(self):
+        return self.values[3]
+    @property
+    def position_x(self):
+        return self.values[4]
+    @property
+    def position_y(self):
+        return self.values[5]
+    @property
+    def position_z(self):
+        return self.values[6]
+    @property
+    def interacting(self):
+        return self.values[7]
+
+class Delta(Cube):
+    def __init__(self, baseline, current):
+        self._values = list(map(lambda x:x[1] - x[0],
+                          zip(baseline.values, current.values)))
+    @property
+    def values(self):
+        return self._values
 
 def rl_enc(bits):
     def write_zeros():
@@ -79,20 +108,17 @@ def rl_enc(bits):
         write_zeros()
     return res
 
+def compress_delta(baseline, current):
+    res = bs.BitStream()
+#     deltas = [Cube(bts,0) for bts in ]
+
 if __name__ == '__main__':
     filename = '/home/dddsnn/Downloads/delta_data.bin'
     data = Data(filename)
-#     print(max(frame.get(i).position_y.uintle for i in range(901)))
-#     print(any(frame.get(i).position_y for i in range(901)))
-    for frame in data:
-        for cube in frame:
-            x = cube.orientation_a.uintle
-            if x:
-                print(x)
-#     print(frame.bits.bin)
-#     print(len(frame.bits))
-#     print(len(rl_enc(frame.bits)))
-#     for frame in (data.get(i) for i in range(2000, 2001)):
-#         for cube in (frame.get(j) for j in range(len(frame.cubes))):
-#             if any(cube.interacting) and cube.interacting != bs.Bits(bin='00000001000000000000000000000000'):
-#                 print (cube.interacting.bin)
+#     frame = data[100]
+#     print(sum(1 for frame in data[6:20] for cube in frame if not cube.position_x))
+#     print(min(cube.orientation_a for frame in data for cube in frame))
+    for baseline_frame, current_frame in zip(data[100:101], data[106:107]):
+        for baseline, current in zip(baseline_frame, current_frame):
+            delta = Delta(baseline, current)
+            print(delta.position_x)
