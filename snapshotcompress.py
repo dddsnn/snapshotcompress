@@ -82,6 +82,9 @@ class Cube:
     def __iter__(self):
         return self.values.__iter__()
 
+    def __getitem__(self, i):
+        return self.values[i]
+
 class DeltaCube(Cube):
     def __init__(self, baseline, current):
         self._values = []
@@ -204,52 +207,62 @@ def encode_varint(n, config, max_len, signed=True):
 
 def select_configs(deltas):
     max_lens = [None, 9, 9, 9, 18, 18, 14, None]
-    pos_sizes = {}
-    ortn_sizes = {}
-    overheads = {}
-    # one config
-    for s in range(3, 10):
-        pos_sizes[[s]] = []
-        ortn_sizes[[s]] = []
-        overhead = len(bs.Bits(ue=1))
-        overhead += len(bs.Bits(ue=s))
-        overheads[[s]] = overhead
-        bounds = compute_bounds_signed([s])
-        for _, d in deltas:
-            size = 0
-            for i, field in enumerate(d[1:4], start=1):
-                # one for the bit telling which setting
-                size += 1
-                if field >= bounds[0] and field <= bounds[1]:
-                    size += s
-                else:
-                    size += max_lens[i]
-            ortn_sizes[[s]].append(size)
-            size = 0
-            for i, field in enumerate(d[4:7], start=4):
-                # one for the bit telling which setting
-                size += 1
-                if field >= bounds[0] and field <= bounds[1]:
-                    size += s
-                else:
-                    size += max_lens[i]
-            pos_sizes[[s]].append(size)
+    pos_sizes = [{} for _ in range(len(deltas))]
+    ortn_sizes = [{} for _ in range(len(deltas))]
+    static_overheads = {}
+    for config_len in range(1, 4):
+        for config in config_permutations(config_len, 3, 11, 3):
+            # static overhead for this config
+            overhead = len(bs.Bits(ue=config_len))
+            for s in config:
+                overhead += len(bs.Bits(ue=s))
+            static_overheads[config] = overhead
+            bounds = compute_bounds_signed(config)
+            # int sizes for pos and ortn data
+            for pos_size, ortn_size, (_, d) in zip(pos_sizes,
+                                                   ortn_sizes, deltas):
+                size = 0
+                # orientation
+                for i, field in enumerate(d[1:4], start=1):
+                    for j in range(config_len):
+                        if field >= bounds[j][0] and field <= bounds[j][1]:
+                            # header bits
+                            size += j + 1
+                            # size of the actual int
+                            size += config[j]
+                            break
+                    else:
+                        size += config_len
+                        size += max_lens[i]
+                ortn_size[config] = size
+                size = 0
+                # position
+                for i, field in enumerate(d[4:7], start=4):
+                    for j in range(config_len):
+                        if field >= bounds[j][0] and field <= bounds[j][1]:
+                            size += j + 1
+                            size += config[j]
+                            break
+                    else:
+                        size += config_len
+                        size += max_lens[i]
+                pos_size[config] = size
 
 def config_permutations(num, low, high, step):
     current = [low + (step * i) for i in range(num)]
     stop = [high - (step * i) for i in range(num - 1, -1, -1)]
     if current[-1] > high:
         raise ValueError('num of settigns doesn\'t fit into the range')
-    yield current[:]
+    yield tuple(current)
     while(current != stop):
         for i in range(len(current) - 1):
             if current[i + 1] - current[i] > step:
                 current[i] += 1
-                yield current[:]
+                yield tuple(current)
                 break
         else:
             current[-1] += 1
-            yield current[:]
+            yield tuple(current)
 
 def compress_delta_frame(baseline_frame, current_frame):
     res = bs.BitStream()
@@ -302,13 +315,8 @@ def compress_delta_frame(baseline_frame, current_frame):
 
 if __name__ == '__main__':
     filename = '/home/dddsnn/Downloads/delta_data.bin'
-    g = config_permutations(3, 3, 10, 3)
-    l = []
-    for x in g:
-        l.append(x)
-    print('\n'.join(str(x) for x in l))
-#     data = Data(filename)
-#     compressed = []
-#     for baseline_frame, current_frame in zip(data[2000:2500], data[2006:2506]):
-#         compressed.append(compress_delta_frame(baseline_frame, current_frame))
-#     print(sum(len(c) for c in compressed))
+    data = Data(filename)
+    compressed = []
+    for baseline_frame, current_frame in zip(data[2000:2500], data[2006:2506]):
+        compressed.append(compress_delta_frame(baseline_frame, current_frame))
+    print(sum(len(c) for c in compressed))
