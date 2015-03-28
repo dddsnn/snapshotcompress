@@ -208,7 +208,7 @@ def compress_delta_frame(baseline_frame, current_frame):
     changed_deltas = [(i, d) for (i, d) in enumerate(deltas) if any(d)]
     num_configs = 1
     configs = Configs([5, 9], [5, 8])
-    index_list_config = [3, 5]
+    index_delta_config = [3, 5]
     # write num of configs (zero unnecessary, always at least 1)
     res += bs.Bits(ue=num_configs - 1)
     # TODO write configs (num of settings and settings, for pos and ortn, last setting implicit (num of bits for the whole thing))
@@ -217,13 +217,36 @@ def compress_delta_frame(baseline_frame, current_frame):
     # can be 0 for one, then a changed bit setup is used, otherwise unchanged
     # cubes can simply be omitted
     num_in_index_list = len(changed_deltas)
+    # TODO this is only known after we decide, see below
     res += bs.Bits(ue=num_in_index_list)
-    # TODO use uint version of varint
-    res += encode_varint(changed_deltas[0][0], index_list_config, 10)
-    res += compress_delta_cube(changed_deltas[0][1], configs)
+    # decide whether it's better to use indices or change flags
+    index_deltas = [encode_varint(changed_deltas[0][0], index_delta_config, 10,
+                         signed=False)]
     for b, c in zip(changed_deltas[:-1], changed_deltas[1:]):
-        res += encode_varint(c[0] - b[0], index_list_config, 10, signed=False)
-        res += compress_delta_cube(c[1], configs)
+        index_deltas.append(encode_varint(c[0] - b[0], index_delta_config, 10,
+                                          signed=False))
+    if sum(len(x) for x in index_deltas) < cubes_per_frame:
+        # use indices
+        for i, d in enumerate(changed_deltas):
+            res += index_deltas[i]
+            res += compress_delta_cube(c[1], configs)
+    else:
+        # use change flags
+        it = iter(changed_deltas)
+        d = next(it)
+        for i in range(cubes_per_frame):
+            if i == d[0]:
+                # write the compressed cube
+                res += bs.Bits(bool=True)
+                res += compress_delta_cube(d[1], configs)
+                try:
+                    d = next(it)
+                except StopIteration:
+                    # no cubes left, make sure we don't get here again
+                    d = (0,)
+        else:
+            # just write a zero to signal no change
+            res += bs.Bits(bool=False)
     return res
 
 if __name__ == '__main__':
