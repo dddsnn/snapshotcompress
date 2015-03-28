@@ -138,28 +138,29 @@ def compress_delta_cube(cube, configs):
     res += bs.Bits(uint=cube.interacting, length=1)
     return res
 
-def encode_varint(n, config, max_len, signed=True):
-    def compute_bounds_signed():
-        # compute the min and max possible value for every setting
-        b = [(-(2 ** (config[0] - 1)), (2 ** (config[0] - 1) - 1))]
-        for i, s in enumerate(config[1:]):
-            prev_bounds = b[i]
-            extension = 2 ** (s - 1)
-            b.append((prev_bounds[0] - extension, prev_bounds[1] + extension))
-        return b
-    def compute_bounds_unsigned():
-        # compute the min and max possible value for every setting
-        b = [(0, (2 ** (config[0]) - 1))]
-        for i, s in enumerate(config[1:]):
-            prev_bounds = b[i]
-            extension = 2 ** s
-            b.append((0, prev_bounds[1] + extension))
-        return b
+def compute_bounds_signed(config):
+    # compute the min and max possible value for every setting
+    b = [(-(2 ** (config[0] - 1)), (2 ** (config[0] - 1) - 1))]
+    for i, s in enumerate(config[1:]):
+        prev_bounds = b[i]
+        extension = 2 ** (s - 1)
+        b.append((prev_bounds[0] - extension, prev_bounds[1] + extension))
+    return b
 
+def compute_bounds_unsigned(config):
+    # compute the min and max possible value for every setting
+    b = [(0, (2 ** (config[0]) - 1))]
+    for i, s in enumerate(config[1:]):
+        prev_bounds = b[i]
+        extension = 2 ** s
+        b.append((0, prev_bounds[1] + extension))
+    return b
+
+def encode_varint(n, config, max_len, signed=True):
     if signed:
-        bounds = compute_bounds_signed()
+        bounds = compute_bounds_signed(config)
     else:
-        bounds = compute_bounds_unsigned()
+        bounds = compute_bounds_unsigned(config)
     # go through the bounds list and find the first fitting index
     for i, b in enumerate(bounds):
         if n >= b[0] and n <= b[1]:
@@ -201,11 +202,61 @@ def encode_varint(n, config, max_len, signed=True):
         header += bs.Bits(bool=False)
     return header + bits
 
+def select_configs(deltas):
+    max_lens = [None, 9, 9, 9, 18, 18, 14, None]
+    pos_sizes = {}
+    ortn_sizes = {}
+    overheads = {}
+    # one config
+    for s in range(3, 10):
+        pos_sizes[[s]] = []
+        ortn_sizes[[s]] = []
+        overhead = len(bs.Bits(ue=1))
+        overhead += len(bs.Bits(ue=s))
+        overheads[[s]] = overhead
+        bounds = compute_bounds_signed([s])
+        for _, d in deltas:
+            size = 0
+            for i, field in enumerate(d[1:4], start=1):
+                # one for the bit telling which setting
+                size += 1
+                if field >= bounds[0] and field <= bounds[1]:
+                    size += s
+                else:
+                    size += max_lens[i]
+            ortn_sizes[[s]].append(size)
+            size = 0
+            for i, field in enumerate(d[4:7], start=4):
+                # one for the bit telling which setting
+                size += 1
+                if field >= bounds[0] and field <= bounds[1]:
+                    size += s
+                else:
+                    size += max_lens[i]
+            pos_sizes[[s]].append(size)
+
+def config_permutations(num, low, high, step):
+    current = [low + (step * i) for i in range(num)]
+    stop = [high - (step * i) for i in range(num - 1, -1, -1)]
+    if current[-1] > high:
+        raise ValueError('num of settigns doesn\'t fit into the range')
+    yield current[:]
+    while(current != stop):
+        for i in range(len(current) - 1):
+            if current[i + 1] - current[i] > step:
+                current[i] += 1
+                yield current[:]
+                break
+        else:
+            current[-1] += 1
+            yield current[:]
+
 def compress_delta_frame(baseline_frame, current_frame):
     res = bs.BitStream()
     deltas = [DeltaCube(baseline, current)
               for baseline, current in zip(baseline_frame, current_frame)]
     changed_deltas = [(i, d) for (i, d) in enumerate(deltas) if any(d)]
+    configs = select_configs(changed_deltas)
     num_configs = 1
     configs = Configs([5, 9], [5, 8])
     index_delta_config = [3, 5]
@@ -251,11 +302,13 @@ def compress_delta_frame(baseline_frame, current_frame):
 
 if __name__ == '__main__':
     filename = '/home/dddsnn/Downloads/delta_data.bin'
-    data = Data(filename)
-#     print(sum(1 for frame in data[6:20] for cube in frame if not cube.position_x))
-#     print(min(cube.position_z for frame in data for cube in frame))
-    for baseline_frame, current_frame in zip(data[2000:2010], data[2006:2016]):
-        print(len(compress_delta_frame(baseline_frame, current_frame)))
-#         for baseline, current in zip(baseline_frame, current_frame):
-#             delta = DeltaCube(baseline, current)
-#             print(delta.position_x)
+    g = config_permutations(3, 3, 10, 3)
+    l = []
+    for x in g:
+        l.append(x)
+    print('\n'.join(str(x) for x in l))
+#     data = Data(filename)
+#     compressed = []
+#     for baseline_frame, current_frame in zip(data[2000:2500], data[2006:2506]):
+#         compressed.append(compress_delta_frame(baseline_frame, current_frame))
+#     print(sum(len(c) for c in compressed))
