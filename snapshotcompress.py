@@ -247,6 +247,20 @@ def select_configs(deltas):
                         size += config_len
                         size += max_lens[i]
                 pos_size[config] = size
+    # dicts config->overall performance
+    pos_perfs = dict(static_overheads)
+    ortn_perfs = dict(static_overheads)
+    for d in pos_sizes:
+        for k in pos_perfs.keys():
+            pos_perfs[k] += d[k]
+    for d in ortn_sizes:
+        for k in ortn_perfs.keys():
+            ortn_perfs[k] += d[k]
+    best_pos = sorted(pos_perfs.items(), key=lambda x:x[1])[0][0]
+    best_ortn = sorted(ortn_perfs.items(), key=lambda x:x[1])[0][0]
+    configs = [Configs(best_pos, best_ortn)]
+    # TODO more configs
+    return configs
 
 def config_permutations(num, low, high, step):
     current = [low + (step * i) for i in range(num)]
@@ -269,20 +283,30 @@ def compress_delta_frame(baseline_frame, current_frame):
     deltas = [DeltaCube(baseline, current)
               for baseline, current in zip(baseline_frame, current_frame)]
     changed_deltas = [(i, d) for (i, d) in enumerate(deltas) if any(d)]
+    # flag whether anything has changed at all
+    if not changed_deltas:
+        res += bs.Bits(bool=False)
+        return res
+    else:
+        res += bs.Bits(bool=True)
     configs = select_configs(changed_deltas)
-    num_configs = 1
-    configs = Configs([5, 9], [5, 8])
-    index_delta_config = [3, 5]
+#     configs = [Configs((3, 9), (5, 8))]
+    num_configs = len(configs)
+#     configs = Configs([5, 9], [5, 8])
+    index_delta_config = (3, 5)
     # write num of configs (zero unnecessary, always at least 1)
     res += bs.Bits(ue=num_configs - 1)
-    # TODO write configs (num of settings and settings, for pos and ortn, last setting implicit (num of bits for the whole thing))
-    # TODO make the following a list
-    # for every config, the number of cubes encoded with it in the index list
-    # can be 0 for one, then a changed bit setup is used, otherwise unchanged
-    # cubes can simply be omitted
-    num_in_index_list = len(changed_deltas)
-    # TODO this is only known after we decide, see below
-    res += bs.Bits(ue=num_in_index_list)
+    # write configs
+    for c in configs:
+        # position
+        res += bs.Bits(ue=len(c.pos))
+        for s in c.pos:
+            res += bs.Bits(ue=s)
+        # orientation
+        res += bs.Bits(ue=len(c.ortn))
+        for s in c.ortn:
+            res += bs.Bits(ue=s)
+    # TODO decide which delta gets encoded with which config, maybe have select_configs return a dict?
     # decide whether it's better to use indices or change flags
     index_deltas = [encode_varint(changed_deltas[0][0], index_delta_config, 10,
                          signed=False)]
@@ -291,18 +315,26 @@ def compress_delta_frame(baseline_frame, current_frame):
                                           signed=False))
     if sum(len(x) for x in index_deltas) < cubes_per_frame:
         # use indices
+        # TODO make the following a list
+        # for every config, the number of cubes encoded with it in the index list
+        # can be 0 for one, then a changed bit setup is used, otherwise unchanged
+        # cubes can simply be omitted
+        num_in_index_list = len(changed_deltas)
+        res += bs.Bits(ue=num_in_index_list)
         for i, d in enumerate(changed_deltas):
             res += index_deltas[i]
-            res += compress_delta_cube(c[1], configs)
+            res += compress_delta_cube(d[1], configs[0])
     else:
         # use change flags
+        num_in_index_list = 0
+        res += bs.Bits(ue=num_in_index_list)
         it = iter(changed_deltas)
         d = next(it)
         for i in range(cubes_per_frame):
             if i == d[0]:
                 # write the compressed cube
                 res += bs.Bits(bool=True)
-                res += compress_delta_cube(d[1], configs)
+                res += compress_delta_cube(d[1], configs[0])
                 try:
                     d = next(it)
                 except StopIteration:
@@ -317,6 +349,6 @@ if __name__ == '__main__':
     filename = '/home/dddsnn/Downloads/delta_data.bin'
     data = Data(filename)
     compressed = []
-    for baseline_frame, current_frame in zip(data[2000:2500], data[2006:2506]):
+    for baseline_frame, current_frame in zip(data[:-6], data[6:]):
         compressed.append(compress_delta_frame(baseline_frame, current_frame))
     print(sum(len(c) for c in compressed))
