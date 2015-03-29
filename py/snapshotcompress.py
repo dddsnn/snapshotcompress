@@ -2,6 +2,8 @@ import bitstring as bs
 import struct
 import itertools
 from bitstring import CreationError
+import numpy as np
+import math
 
 cubesize = 32
 cubes_per_frame = 901
@@ -86,7 +88,7 @@ class Cube:
         return self.values[i]
 
 class DeltaCube(Cube):
-    def __init__(self, baseline, current):
+    def __init__(self, baseline, current, prev_base):
         self._values = []
         # largest orientation index
         v = current.values[0] - baseline.values[0]
@@ -112,6 +114,19 @@ class DeltaCube(Cube):
         self._values.append(v)
         # interacting, 0 if same, 1 otherwise
         self._values.append(abs(current.values[7] - baseline.values[7]))
+        # expected
+        # TODO does all this fit?
+        gravity = 3
+        ground_limit = 105
+        self.expected_dx = baseline.values[4] - prev_base.values[4]
+        self.expected_dy = baseline.values[5] - prev_base.values[5]
+        self.expected_dz = baseline.values[6] - prev_base.values[6]
+        drag_x = -math.ceil(self.expected_dx * 0.062)
+        drag_y = -math.ceil(self.expected_dy * 0.062)
+        drag_z = -math.ceil(self.expected_dz * 0.062)
+        self.expected_x = baseline.values[4] + self.expected_dx + drag_x;
+        self.expected_y = baseline.values[5] + self.expected_dy + drag_y;
+        self.expected_z = max(baseline.values[6] + self.expected_dz - gravity + drag_z, ground_limit);
 
     @property
     def values(self):
@@ -130,13 +145,28 @@ def compress_delta_cube(cube, configs):
     except CreationError:
         res += bs.Bits(uint=cube.orientation_largest, length=2)
     # orientation
-    for x in (cube.orientation_a, cube.orientation_b, cube.orientation_c):
-        res += encode_varint(x, configs.ortn, 9)
+    if any(cube.values[1:4]):
+        allsmall = all(x >= -2 and x < 2 for x in cube.values[1:4])
+        for x in (cube.orientation_a, cube.orientation_b, cube.orientation_c):
+            if allsmall:
+                res += bs.Bits(int=x, length=2)
+            else:
+                res += encode_varint(x, configs.ortn, 9)
     # position x,y
-    for x in (cube.position_x, cube.position_y):
-        res += encode_varint(x, configs.pos, 18)
+    allsmall = all(e - a >= -8 and e - a < 8 for a, e in ((cube.position_x, cube.expected_dx),
+                                 (cube.position_y, cube.expected_dy), (cube.position_z, cube.expected_dz)))
+    if any(cube.values[4:7]):
+        for actual, expected in ((cube.position_x, cube.expected_dx),
+                                 (cube.position_y, cube.expected_dy)):
+            if allsmall:
+                res += bs.Bits(int=expected - actual, length=4)
+            else:
+                res += encode_varint(expected - actual, configs.pos, 18)
     # position z
-    res += encode_varint(cube.position_z, configs.pos, 14)
+    if allsmall:
+        res += bs.Bits(int=cube.expected_dz - cube.position_z, length=4)
+    else:
+        res += encode_varint(cube.expected_z - cube.position_z, configs.pos, 14)
     # interacting
     res += bs.Bits(uint=cube.interacting, length=1)
     return res
@@ -156,7 +186,7 @@ def compute_bounds_unsigned(config):
     for i, s in enumerate(config[1:]):
         prev_bounds = b[i]
         extension = 2 ** s
-        b.append((0, prev_bounds[1] + extension))
+        b.append((prev_bounds[1] + 1, prev_bounds[1] + extension))
     return b
 
 def encode_varint(n, config, max_len, signed=True):
@@ -237,9 +267,13 @@ def select_configs(deltas):
                 ortn_size[config] = size
                 size = 0
                 # position
-                for i, field in enumerate(d[4:7], start=4):
+                for i, (expected, actual) in enumerate([(d.expected_dx, d.position_x),
+                                                      (d.expected_dy, d.position_y),
+                                                      (d.expected_dz, d.position_z)],
+                                                     start=4):
+                    num = expected - actual
                     for j in range(config_len):
-                        if field >= bounds[j][0] and field <= bounds[j][1]:
+                        if num >= bounds[j][0] and num <= bounds[j][1]:
                             size += j + 1
                             size += config[j]
                             break
@@ -260,13 +294,14 @@ def select_configs(deltas):
     best_ortn = sorted(ortn_perfs.items(), key=lambda x:x[1])[0][0]
     configs = [Configs(best_pos, best_ortn)]
     # TODO more configs
+    print('config: {0},{1}'.format(configs[0].ortn, configs[0].pos))
     return configs
 
 def config_permutations(num, low, high, step):
     current = [low + (step * i) for i in range(num)]
     stop = [high - (step * i) for i in range(num - 1, -1, -1)]
     if current[-1] > high:
-        raise ValueError('num of settigns doesn\'t fit into the range')
+        raise ValueError('num of settings doesn\'t fit into the range')
     yield tuple(current)
     while(current != stop):
         for i in range(len(current) - 1):
@@ -278,11 +313,12 @@ def config_permutations(num, low, high, step):
             current[-1] += 1
             yield tuple(current)
 
-def compress_delta_frame(baseline_frame, current_frame):
+def compress_delta_frame(baseline_frame, current_frame, prev_base_frame):
     res = bs.BitStream()
-    deltas = [DeltaCube(baseline, current)
-              for baseline, current in zip(baseline_frame, current_frame)]
+    deltas = [DeltaCube(baseline, current, prev_base)
+              for baseline, current, prev_base in zip(baseline_frame, current_frame, prev_base_frame)]
     changed_deltas = [(i, d) for (i, d) in enumerate(deltas) if any(d)]
+    print('{0} changes'.format(len(changed_deltas)))
     # flag whether anything has changed at all
     if not changed_deltas:
         res += bs.Bits(bool=False)
@@ -292,8 +328,7 @@ def compress_delta_frame(baseline_frame, current_frame):
     configs = select_configs(changed_deltas)
 #     configs = [Configs((3, 9), (5, 8))]
     num_configs = len(configs)
-#     configs = Configs([5, 9], [5, 8])
-    index_delta_config = (3, 5)
+    index_delta_config = (1, 2, 3, 4, 5, 6)
     # write num of configs (zero unnecessary, always at least 1)
     res += bs.Bits(ue=num_configs - 1)
     # write configs
@@ -347,8 +382,15 @@ def compress_delta_frame(baseline_frame, current_frame):
 
 if __name__ == '__main__':
     filename = '/home/dddsnn/Downloads/delta_data.bin'
+    print(compute_bounds_unsigned((1, 2, 3, 4, 5, 6)))
+    print(encode_varint(6, (1, 2, 3, 4, 5, 6), 10, signed=False).bin)
     data = Data(filename)
     compressed = []
-    for baseline_frame, current_frame in zip(data[:-6], data[6:]):
-        compressed.append(compress_delta_frame(baseline_frame, current_frame))
+    for baseline_frame, current_frame, prev_base_frame in zip(data[:-6], data[6:], data[:6] + data[:-6]):
+#         deltas = [DeltaCube(baseline, current)
+#               for baseline, current in zip(baseline_frame, current_frame)]
+#         print(np.mean([abs(d.position_x) for d in deltas if d.orientation_a]))
+#         print('\n'.join(str(d.orientation_a) for d in deltas if d.orientation_a))
+        compressed.append(compress_delta_frame(baseline_frame, current_frame, prev_base_frame))
+        print('compressed length: {0}'.format(len(compressed[-1])))
     print(sum(len(c) for c in compressed))
