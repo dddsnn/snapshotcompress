@@ -1349,6 +1349,26 @@ struct Configs {
 
 typedef std::vector<int> Config;
 
+int bits_required_config(int value, const Config& config) {
+	assert(config.size() > 0);
+	int size = 0;
+	int range_min = 0;
+
+	for(int i = 0; i < config.size() - 1; ++i) {
+		const int range_max = range_min + ((1 << config[i]) - 1);
+		bool in_range = value <= range_max;
+		// +1 for in_range
+		size += 1;
+		if(in_range) {
+			size += config[i];
+			return size;
+		}
+		range_min += (1 << config[i]);
+	}
+
+	return config[0];
+}
+
 template<typename Stream> void serialize_configs(Stream stream,
 		Configs& configs) {
 	serialize_bits(stream, configs.ortn_config_len, 10);
@@ -1470,33 +1490,9 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 					pos_size += 1;
 
 					if(!too_large) {
-						// x
-						for(unsigned int j = 0; j < config->size(); j++) {
-							pos_size += 1;
-							if(dx < limits[j]) {
-								int min = j == 0 ? 0 : limits[j - 1];
-								pos_size += bits_required(min, limits[j] - 1);
-								break;
-							}
-						}
-						// y
-						for(unsigned int j = 0; j < config->size(); j++) {
-							pos_size += 1;
-							if(dy < limits[j]) {
-								int min = j == 0 ? 0 : limits[j - 1];
-								pos_size += bits_required(min, limits[j] - 1);
-								break;
-							}
-						}
-						// z
-						for(unsigned int j = 0; j < config->size(); j++) {
-							pos_size += 1;
-							if(dz < limits[j]) {
-								int min = j == 0 ? 0 : limits[j - 1];
-								pos_size += bits_required(min, limits[j] - 1);
-								break;
-							}
-						}
+						pos_size += bits_required_config(dx, *config);
+						pos_size += bits_required_config(dy, *config);
+						pos_size += bits_required_config(dz, *config);
 						continue;
 					} else {
 						pos_size += 3 * bits_required(0, max_delta);
@@ -1539,33 +1535,9 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 						ortn_size += 3 * bits_required(0, small_limit);
 						continue;
 					} else {
-						// a
-						for(unsigned int j = 0; j < config->size(); j++) {
-							ortn_size += 1;
-							if(da < limits[j]) {
-								int min = j == 0 ? 0 : limits[j - 1];
-								ortn_size += bits_required(min, limits[j] - 1);
-								break;
-							}
-						}
-						// b
-						for(unsigned int j = 0; j < config->size(); j++) {
-							ortn_size += 1;
-							if(db < limits[j]) {
-								int min = j == 0 ? 0 : limits[j - 1];
-								ortn_size += bits_required(min, limits[j] - 1);
-								break;
-							}
-						}
-						// c
-						for(unsigned int j = 0; j < config->size(); j++) {
-							ortn_size += 1;
-							if(dc < limits[j]) {
-								int min = j == 0 ? 0 : limits[j - 1];
-								ortn_size += bits_required(min, limits[j] - 1);
-								break;
-							}
-						}
+						ortn_size += bits_required_config(da, *config);
+						ortn_size += bits_required_config(db, *config);
+						ortn_size += bits_required_config(dc, *config);
 						continue;
 					}
 				} else {
@@ -1609,36 +1581,36 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 //	}
 //	printf("\n");
 
-	int* pos_config = new int[best_pos_config->size()];
-	std::copy(best_pos_config->begin(), best_pos_config->end(), pos_config);
-	const int pos_config_len = best_pos_config->size();
+//	int* pos_config = new int[best_pos_config->size()];
+//	std::copy(best_pos_config->begin(), best_pos_config->end(), pos_config);
+//	const int pos_config_len = best_pos_config->size();
 
-	int* ortn_config = new int[best_ortn_config->size()];
-	std::copy(best_ortn_config->begin(), best_ortn_config->end(), ortn_config);
-	const int ortn_config_len = best_ortn_config->size();
+//	int* ortn_config = new int[best_ortn_config->size()];
+//	std::copy(best_ortn_config->begin(), best_ortn_config->end(), ortn_config);
+//	const int ortn_config_len = best_ortn_config->size();
 	Configs configs;
-	configs.pos_config = pos_config;
-	configs.pos_config_len = pos_config_len;
-	configs.ortn_config = ortn_config;
-	configs.ortn_config_len = ortn_config_len;
-	return configs;
-
-//	int* pos_config = new int[3];
-//	pos_config[0] = 5;
-//	pos_config[1] = 6;
-//	pos_config[2] = 7;
-//	const int pos_config_len = 3;
-//	int* ortn_config = new int[3];
-//	ortn_config[0] = 4;
-//	ortn_config[1] = 5;
-//	ortn_config[2] = 7;
-//	const int ortn_config_len = 3;
-//	Configs configs;
 //	configs.pos_config = pos_config;
 //	configs.pos_config_len = pos_config_len;
 //	configs.ortn_config = ortn_config;
 //	configs.ortn_config_len = ortn_config_len;
 //	return configs;
+
+	int* pos_config = new int[3];
+	pos_config[0] = 5;
+	pos_config[1] = 6;
+	pos_config[2] = 7;
+	const int pos_config_len = 3;
+	int* ortn_config = new int[3];
+	ortn_config[0] = 4;
+	ortn_config[1] = 5;
+	ortn_config[2] = 7;
+	const int ortn_config_len = 3;
+//	Configs configs;
+	configs.pos_config = pos_config;
+	configs.pos_config_len = pos_config_len;
+	configs.ortn_config = ortn_config;
+	configs.ortn_config_len = ortn_config_len;
+	return configs;
 }
 
 template<typename Stream> void serialize_relative_position(Stream & stream,
@@ -1893,10 +1865,15 @@ template<typename Stream> void serialize_snapshot_relative_to_baseline(
 
 	if(Stream::IsWriting) {
 		DeltaCubeData* delta_cubes = new DeltaCubeData[num_changed];
-		for(int i = 0; i < num_changed; ++i) {
-			delta_cubes[i] = make_delta_cube(quantized_cubes[i],
-					quantized_base_cubes[i], compression_state.delta_x[i],
-					compression_state.delta_y[i], compression_state.delta_z[i]);
+		int j = 0;
+		for(int i = 0; i < NumCubes; ++i) {
+			if(changed[i]) {
+				delta_cubes[j] = make_delta_cube(quantized_cubes[i],
+						quantized_base_cubes[i], compression_state.delta_x[i],
+						compression_state.delta_y[i],
+						compression_state.delta_z[i]);
+				j++;
+			}
 		}
 
 		configs = select_configs(delta_cubes, num_changed);
