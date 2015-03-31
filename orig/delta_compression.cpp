@@ -1500,7 +1500,7 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 						}
 						continue;
 					} else {
-						pos_size += bits_required(0, max_delta);
+						pos_size += 3 * bits_required(0, max_delta);
 						continue;
 					}
 				}
@@ -1602,11 +1602,11 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 		}
 	}
 
-	for(Config::const_iterator x = best_pos_config->begin();
-			x != best_pos_config->end(); x++) {
-		printf("%i ", *x);
-	}
-	printf("\n");
+//	for(Config::const_iterator x = best_pos_config->begin();
+//			x != best_pos_config->end(); x++) {
+//		printf("%i ", *x);
+//	}
+//	printf("\n");
 
 	int* pos_config = new int[best_pos_config->size()];
 	std::copy(best_pos_config->begin(), best_pos_config->end(), pos_config);
