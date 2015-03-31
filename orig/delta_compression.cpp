@@ -1351,33 +1351,64 @@ typedef std::vector<int> Config;
 
 template<typename Stream> void serialize_configs(Stream stream,
 		Configs& configs) {
-	serialize_int(stream, configs.ortn_config_len, 0, 63);
-	for(int i = 0; i < configs.ortn_config_len; i++) {
-		serialize_int(stream, configs.ortn_config[i], 0, 63);
+	serialize_bits(stream, configs.ortn_config_len, 10);
+	if(Stream::IsReading) {
+		configs.ortn_config = new int[configs.ortn_config_len];
 	}
-	serialize_int(stream, configs.pos_config_len, 0, 63);
+	for(int i = 0; i < configs.ortn_config_len; i++) {
+		serialize_bits(stream, configs.ortn_config[i], 10);
+	}
+	serialize_bits(stream, configs.pos_config_len, 10);
+	if(Stream::IsReading) {
+		configs.pos_config = new int[configs.pos_config_len];
+	}
 	for(int i = 0; i < configs.pos_config_len; i++) {
-		serialize_int(stream, configs.pos_config[i], 0, 63);
+		serialize_bits(stream, configs.pos_config[i], 10);
 	}
 }
 
 std::vector<Config> compute_config_permutations(int num, int min, int max,
 		int step) {
-	return std::vector<Config>();
+	assert(min + (num - 1) * step <= max);
+	std::vector<Config> configs;
+	Config last(num);
+	Config first(num);
+	Config& previous = first;
+	for(int i = 0; i < num; i++) {
+		first[i] = min + (step * i);
+		last[i] = max - (step * (num - i - 1));
+	}
+	configs.push_back(first);
+	while(previous != last) {
+		Config current(previous);
+		int i;
+		for(i = 1; i < num; i++) {
+			if(current[i] - current[i - 1] > step) {
+				current[i - 1] += 1;
+				break;
+			}
+		}
+		if(i == num) {
+			current[num - 1] += 1;
+		}
+		configs.push_back(current);
+		previous = current;
+	}
+	return configs;
 }
 
 std::vector<int> compute_limits(const Config& config) {
 	std::vector<int> list = std::vector<int>(config.size());
 	for(unsigned int i = 1; i <= config.size(); i++) {
 		int limit = unsigned_range_limit(i, config);
-		list.push_back(limit);
+		list[i - 1] = limit;
 	}
 	return list;
 }
 
 struct DeltaCubeData {
 		bool position_changed;
-		int orienatation_largest;
+		int orientation_largest;
 		int orientation_a;
 		int orientation_b;
 		int orientation_c;
@@ -1391,9 +1422,9 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 	std::map<Config, int> ortn_sizes = std::map<Config, int>();
 	std::map<Config, int> static_overheads = std::map<Config, int>();
 
-	for(int config_len = 1; config_len < 10; config_len++) {
+	for(int config_len = 1; config_len < 8; config_len++) {
 		std::vector<Config> config_permutations = compute_config_permutations(
-				config_len, 3, 11, 3);
+				config_len, 3, 12, 1);
 		for(std::vector<Config>::iterator config = config_permutations.begin();
 				config != config_permutations.end(); config++) {
 			int pos_size = 0;
@@ -1416,7 +1447,7 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 				pos_size += 1;
 				bool all_small;
 				bool too_large;
-				uint32_t dx, dy, dz;
+				int dx, dy, dz;
 
 				const int small_limit = 15;
 				const int large_limit = unsigned_range_limit(config_len,
@@ -1441,29 +1472,29 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 
 					if(!too_large) {
 						// x
-						for(int j = 0; j < config->size(); j++) {
+						for(unsigned int j = 0; j < config->size(); j++) {
 							pos_size += 1;
-							if(dx <= limits[j]) {
+							if(dx < limits[j]) {
 								int min = j == 0 ? 0 : limits[j - 1];
-								pos_size += bits_required(min, limits[j]);
+								pos_size += bits_required(min, limits[j] - 1);
 								break;
 							}
 						}
 						// y
-						for(int j = 0; j < config->size(); j++) {
+						for(unsigned int j = 0; j < config->size(); j++) {
 							pos_size += 1;
-							if(dy <= limits[j]) {
+							if(dy < limits[j]) {
 								int min = j == 0 ? 0 : limits[j - 1];
-								pos_size += bits_required(min, limits[j]);
+								pos_size += bits_required(min, limits[j] - 1);
 								break;
 							}
 						}
 						// z
-						for(int j = 0; j < config->size(); j++) {
+						for(unsigned int j = 0; j < config->size(); j++) {
 							pos_size += 1;
-							if(dz <= limits[j]) {
+							if(dz < limits[j]) {
 								int min = j == 0 ? 0 : limits[j - 1];
-								pos_size += bits_required(min, limits[j]);
+								pos_size += bits_required(min, limits[j] - 1);
 								break;
 							}
 						}
@@ -1485,11 +1516,11 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 				const int large_limit = unsigned_range_limit(config_len,
 						*config);
 
-				uint32_t da, db, dc;
+				int da, db, dc;
 				bool all_small = false;
 				bool relative_orientation = false;
 
-				if(delta_cube.orienatation_largest != 0) {
+				if(delta_cube.orientation_largest == 0) {
 					da = delta_cube.orientation_a;
 					db = delta_cube.orientation_b;
 					dc = delta_cube.orientation_c;
@@ -1510,29 +1541,29 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 						continue;
 					} else {
 						// a
-						for(int j = 0; j < config->size(); j++) {
+						for(unsigned int j = 0; j < config->size(); j++) {
 							ortn_size += 1;
-							if(da <= limits[j]) {
+							if(da < limits[j]) {
 								int min = j == 0 ? 0 : limits[j - 1];
-								ortn_size += bits_required(min, limits[j]);
+								ortn_size += bits_required(min, limits[j] - 1);
 								break;
 							}
 						}
 						// b
-						for(int j = 0; j < config->size(); j++) {
+						for(unsigned int j = 0; j < config->size(); j++) {
 							ortn_size += 1;
-							if(db <= limits[j]) {
+							if(db < limits[j]) {
 								int min = j == 0 ? 0 : limits[j - 1];
-								ortn_size += bits_required(min, limits[j]);
+								ortn_size += bits_required(min, limits[j] - 1);
 								break;
 							}
 						}
 						// c
-						for(int j = 0; j < config->size(); j++) {
+						for(unsigned int j = 0; j < config->size(); j++) {
 							ortn_size += 1;
-							if(dc <= limits[j]) {
+							if(dc < limits[j]) {
 								int min = j == 0 ? 0 : limits[j - 1];
-								ortn_size += bits_required(min, limits[j]);
+								ortn_size += bits_required(min, limits[j] - 1);
 								break;
 							}
 						}
@@ -1547,69 +1578,66 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 			ortn_sizes.insert(std::pair<Config, int>(*config, ortn_size));
 		}
 	}
-	const std::pair<const Config, int>* best_pos_config = &(*pos_sizes.begin());
+	std::pair<const Config, int> pos_tmp = *pos_sizes.begin();
+	const Config* best_pos_config = &pos_tmp.first;
+	int best_pos_size = pos_tmp.second;
 	for(std::map<Config, int>::iterator pos_size = pos_sizes.begin();
 			pos_size != pos_sizes.end(); pos_size++) {
-		if(pos_size->second < best_pos_config->second) {
-			best_pos_config = &*pos_size;
+		if(pos_size->second < best_pos_size) {
+			best_pos_config = &pos_size->first;
+			best_pos_size = pos_size->second;
+			printf("config len: %lu, first setting: %i, size: %i\n",
+					pos_size->first.size(), pos_size->first.front(),
+					best_pos_size);
 		}
 	}
-	const std::pair<const Config, int>* best_ortn_config =
-			&(*ortn_sizes.begin());
+	std::pair<const Config, int> ortn_tmp = *ortn_sizes.begin();
+	const Config* best_ortn_config = &ortn_tmp.first;
+	int best_ortn_size = ortn_tmp.second;
 	for(std::map<Config, int>::iterator ortn_size = ortn_sizes.begin();
 			ortn_size != ortn_sizes.end(); ortn_size++) {
-		if(ortn_size->second < best_ortn_config->second) {
-			best_ortn_config = &*ortn_size;
+		if(ortn_size->second < best_ortn_size) {
+			best_ortn_config = &ortn_size->first;
+			best_ortn_size = ortn_size->second;
 		}
 	}
 
-//	int* pos_config = new int[best_pos_config->first.size()];
-//	std::copy(best_pos_config->first.begin(), best_pos_config->first.end(),
-//			pos_config);
-//	const int pos_config_len = best_pos_config->first.size();
-//
-//	int* ortn_config = new int[best_ortn_config->first.size()];
-//	std::copy(best_ortn_config->first.begin(), best_ortn_config->first.end(),
-//			ortn_config);
-//	const int ortn_config_len = best_ortn_config->first.size();
-//	Configs configs;
-//	configs.pos_config = pos_config;
-//	configs.pos_config_len = pos_config_len;
-//	configs.ortn_config = ortn_config;
-//	configs.ortn_config_len = ortn_config_len;
-//	return configs;
-//# dicts config->overall performance
-//pos_perfs = dict(static_overheads)
-//ortn_perfs = dict(static_overheads)
-//for d in pos_sizes:
-//for k in pos_perfs.keys():
-//pos_perfs[k] += d[k]
-//for d in ortn_sizes:
-//for k in ortn_perfs.keys():
-//ortn_perfs[k] += d[k]
-//best_pos = sorted(pos_perfs.items(), key=lambda x:x[1])[0][0]
-//best_ortn = sorted(ortn_perfs.items(), key=lambda x:x[1])[0][0]
-//configs = [Configs(best_pos, best_ortn)]
-//# TODO more configs
-//print('config: {0}, {1}'.format(configs[0].ortn, configs[0].pos))
-//return configs
+	for(Config::const_iterator x = best_pos_config->begin();
+			x != best_pos_config->end(); x++) {
+		printf("%i ", *x);
+	}
+	printf("\n");
 
-	int* pos_config = new int[3];
-	pos_config[0] = 5;
-	pos_config[1] = 6;
-	pos_config[2] = 7;
-	const int pos_config_len = 3;
-	int* ortn_config = new int[3];
-	ortn_config[0] = 4;
-	ortn_config[1] = 5;
-	ortn_config[2] = 7;
-	const int ortn_config_len = 3;
+	int* pos_config = new int[best_pos_config->size()];
+	std::copy(best_pos_config->begin(), best_pos_config->end(), pos_config);
+	const int pos_config_len = best_pos_config->size();
+
+	int* ortn_config = new int[best_ortn_config->size()];
+	std::copy(best_ortn_config->begin(), best_ortn_config->end(), ortn_config);
+	const int ortn_config_len = best_ortn_config->size();
 	Configs configs;
 	configs.pos_config = pos_config;
 	configs.pos_config_len = pos_config_len;
 	configs.ortn_config = ortn_config;
 	configs.ortn_config_len = ortn_config_len;
 	return configs;
+
+//	int* pos_config = new int[3];
+//	pos_config[0] = 5;
+//	pos_config[1] = 6;
+//	pos_config[2] = 7;
+//	const int pos_config_len = 3;
+//	int* ortn_config = new int[3];
+//	ortn_config[0] = 4;
+//	ortn_config[1] = 5;
+//	ortn_config[2] = 7;
+//	const int ortn_config_len = 3;
+//	Configs configs;
+//	configs.pos_config = pos_config;
+//	configs.pos_config_len = pos_config_len;
+//	configs.ortn_config = ortn_config;
+//	configs.ortn_config_len = ortn_config_len;
+//	return configs;
 }
 
 template<typename Stream> void serialize_relative_position(Stream & stream,
@@ -1824,7 +1852,7 @@ DeltaCubeData make_delta_cube(const QuantizedCubeState & current,
 			current.orientation;
 	const compressed_quaternion<OrientationBits> & base_orientation =
 			base.orientation;
-	delta_cube.orienatation_largest = orientation.largest
+	delta_cube.orientation_largest = orientation.largest
 			- base_orientation.largest;
 	delta_cube.orientation_a = signed_to_unsigned(
 			orientation.integer_a - base_orientation.integer_a);
@@ -1862,26 +1890,47 @@ template<typename Stream> void serialize_snapshot_relative_to_baseline(
 		}
 	}
 
-//	if(Stream::IsWriting) {
+	if(Stream::IsWriting) {
 		DeltaCubeData* delta_cubes = new DeltaCubeData[num_changed];
 		for(int i = 0; i < num_changed; ++i) {
 			delta_cubes[i] = make_delta_cube(quantized_cubes[i],
 					quantized_base_cubes[i], compression_state.delta_x[i],
 					compression_state.delta_y[i], compression_state.delta_z[i]);
 		}
+
 		configs = select_configs(delta_cubes, num_changed);
 		delete[] delta_cubes;
+		printf("ortn:");
 		for(int i = 0; i < configs.ortn_config_len; i++) {
 			int x = configs.ortn_config[i];
+			printf("%i ", x);
 			continue;
 		}
+		printf("\npos:");
 		for(int i = 0; i < configs.pos_config_len; i++) {
 			int x = configs.pos_config[i];
+			printf("%i ", x);
 			continue;
 		}
-//	}
+		printf("\n");
+	}
 
 //	serialize_configs(stream, configs);
+
+	serialize_bits(stream, configs.ortn_config_len, 4);
+	if(Stream::IsReading) {
+		configs.ortn_config = new int[configs.ortn_config_len];
+	}
+	for(int i = 0; i < configs.ortn_config_len; i++) {
+		serialize_bits(stream, configs.ortn_config[i], 4);
+	}
+	serialize_bits(stream, configs.pos_config_len, 4);
+	if(Stream::IsReading) {
+		configs.pos_config = new int[configs.pos_config_len];
+	}
+	for(int i = 0; i < configs.pos_config_len; i++) {
+		serialize_bits(stream, configs.pos_config[i], 4);
+	}
 
 	serialize_bool(stream, use_indices);
 
