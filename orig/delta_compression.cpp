@@ -1428,11 +1428,10 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 		for(std::vector<Config>::iterator config = config_permutations.begin();
 				config != config_permutations.end(); config++) {
 			int pos_size = 0;
-// static overhead for this config TODO
-//			overhead = len(bs.Bits(ue = config_len))
-//		for s in config:
-//		overhead += len(bs.Bits(ue=s))
-//		static_overheads[config] = overhead
+			// static overhead for this config
+			// 4 bit for the length, 4 bit for each setting
+			int overhead = (1 + config->size()) * 4;
+			static_overheads.insert(std::pair<Config, int>(*config, overhead));
 			std::vector<int> limits = compute_limits(*config);
 			// position
 			for(int i = 0; i < num_changed; i++) {
@@ -1580,25 +1579,27 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 	}
 	std::pair<const Config, int> pos_tmp = *pos_sizes.begin();
 	const Config* best_pos_config = &pos_tmp.first;
-	int best_pos_size = pos_tmp.second;
+	int best_pos_size = pos_tmp.second + static_overheads[*best_pos_config];
 	for(std::map<Config, int>::iterator pos_size = pos_sizes.begin();
 			pos_size != pos_sizes.end(); pos_size++) {
-		if(pos_size->second < best_pos_size) {
+		int size = pos_size->second + static_overheads[pos_size->first];
+		if(size < best_pos_size) {
 			best_pos_config = &pos_size->first;
-			best_pos_size = pos_size->second;
-			printf("config len: %lu, first setting: %i, size: %i\n",
-					pos_size->first.size(), pos_size->first.front(),
-					best_pos_size);
+			best_pos_size = size;
+//			printf("config len: %lu, first setting: %i, size: %i\n",
+//					pos_size->first.size(), pos_size->first.front(),
+//					best_pos_size);
 		}
 	}
 	std::pair<const Config, int> ortn_tmp = *ortn_sizes.begin();
 	const Config* best_ortn_config = &ortn_tmp.first;
-	int best_ortn_size = ortn_tmp.second;
+	int best_ortn_size = ortn_tmp.second + static_overheads[*best_ortn_config];
 	for(std::map<Config, int>::iterator ortn_size = ortn_sizes.begin();
 			ortn_size != ortn_sizes.end(); ortn_size++) {
-		if(ortn_size->second < best_ortn_size) {
+		int size = ortn_size->second + static_overheads[ortn_size->first];
+		if(size < best_ortn_size) {
 			best_ortn_config = &ortn_size->first;
-			best_ortn_size = ortn_size->second;
+			best_ortn_size = size;
 		}
 	}
 
