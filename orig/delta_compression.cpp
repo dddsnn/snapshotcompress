@@ -1321,8 +1321,10 @@ template<typename Stream> void serialize_unsigned_range(Stream & stream,
 		const int range_max = range_min + ((1 << range_bits[i]) - 1);
 		bool in_range = Stream::IsWriting && value <= range_max;
 		serialize_bool(stream, in_range);
+//		printf("1\n");
 		if(in_range) {
 			serialize_int(stream, value, range_min, range_max);
+//			printf("%i\n", range_bits[i]);
 			return;
 		}
 		range_min += (1 << range_bits[i]);
@@ -1330,6 +1332,7 @@ template<typename Stream> void serialize_unsigned_range(Stream & stream,
 
 	serialize_int(stream, value, range_min,
 			range_min + ((1 << range_bits[num_ranges - 1]) - 1));
+//	printf("%i\n", range_bits[num_ranges - 1]);
 }
 
 template<typename Indexable> inline int unsigned_range_limit(int num_ranges,
@@ -1354,7 +1357,7 @@ int bits_required_config(int value, const Config& config) {
 	int size = 0;
 	int range_min = 0;
 
-	for(int i = 0; i < config.size() - 1; ++i) {
+	for(unsigned int i = 0; i < config.size() - 1; ++i) {
 		const int range_max = range_min + ((1 << config[i]) - 1);
 		bool in_range = value <= range_max;
 		// +1 for in_range
@@ -1366,7 +1369,7 @@ int bits_required_config(int value, const Config& config) {
 		range_min += (1 << config[i]);
 	}
 
-	return config[0];
+	return size + config.back();
 }
 
 template<typename Stream> void serialize_configs(Stream stream,
@@ -1442,11 +1445,15 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 	std::map<Config, int> ortn_sizes = std::map<Config, int>();
 	std::map<Config, int> static_overheads = std::map<Config, int>();
 
-	for(int config_len = 1; config_len < 8; config_len++) {
+	for(int config_len = 1; config_len < 9; config_len++) {
 		std::vector<Config> config_permutations = compute_config_permutations(
-				config_len, 3, 12, 1);
+				config_len, 1, 15, 1);
 		for(std::vector<Config>::iterator config = config_permutations.begin();
 				config != config_permutations.end(); config++) {
+			if(config_len == 3 && config->at(0) == 5 && config->at(1) == 6
+					&& config->at(2) == 7) {
+				int y = 12;
+			}
 			int pos_size = 0;
 			// static overhead for this config
 			// 4 bit for the length, 4 bit for each setting
@@ -1456,8 +1463,6 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 			// position
 			for(int i = 0; i < num_changed; i++) {
 				DeltaCubeData delta_cube = delta_cubes[i];
-				// start with one, for the position_changed bool
-				pos_size += 1;
 				if(!delta_cube.position_changed) {
 					// position won't be serialized, continue
 					continue;
@@ -1549,6 +1554,10 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 			ortn_sizes.insert(std::pair<Config, int>(*config, ortn_size));
 		}
 	}
+	Config pos_handpicked(3);
+	pos_handpicked[0] = 5;
+	pos_handpicked[1] = 6;
+	pos_handpicked[2] = 7;
 	std::pair<const Config, int> pos_tmp = *pos_sizes.begin();
 	const Config* best_pos_config = &pos_tmp.first;
 	int best_pos_size = pos_tmp.second + static_overheads[*best_pos_config];
@@ -1563,6 +1572,11 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 //					best_pos_size);
 		}
 	}
+	printf("pos :%i\n", pos_sizes[pos_handpicked] - best_pos_size);
+	Config ortn_handpicked(3);
+	ortn_handpicked[0] = 4;
+	ortn_handpicked[1] = 5;
+	ortn_handpicked[2] = 7;
 	std::pair<const Config, int> ortn_tmp = *ortn_sizes.begin();
 	const Config* best_ortn_config = &ortn_tmp.first;
 	int best_ortn_size = ortn_tmp.second + static_overheads[*best_ortn_config];
@@ -1574,6 +1588,7 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 			best_ortn_size = size;
 		}
 	}
+	printf("ortn:%i\n\n", ortn_sizes[ortn_handpicked] - best_ortn_size);
 
 //	for(Config::const_iterator x = best_pos_config->begin();
 //			x != best_pos_config->end(); x++) {
@@ -1581,13 +1596,13 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 //	}
 //	printf("\n");
 
-//	int* pos_config = new int[best_pos_config->size()];
-//	std::copy(best_pos_config->begin(), best_pos_config->end(), pos_config);
-//	const int pos_config_len = best_pos_config->size();
+	int* pos_config = new int[best_pos_config->size()];
+	std::copy(best_pos_config->begin(), best_pos_config->end(), pos_config);
+	const int pos_config_len = best_pos_config->size();
 
-//	int* ortn_config = new int[best_ortn_config->size()];
-//	std::copy(best_ortn_config->begin(), best_ortn_config->end(), ortn_config);
-//	const int ortn_config_len = best_ortn_config->size();
+	int* ortn_config = new int[best_ortn_config->size()];
+	std::copy(best_ortn_config->begin(), best_ortn_config->end(), ortn_config);
+	const int ortn_config_len = best_ortn_config->size();
 	Configs configs;
 //	configs.pos_config = pos_config;
 //	configs.pos_config_len = pos_config_len;
@@ -1595,16 +1610,16 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 //	configs.ortn_config_len = ortn_config_len;
 //	return configs;
 
-	int* pos_config = new int[3];
-	pos_config[0] = 5;
-	pos_config[1] = 6;
-	pos_config[2] = 7;
-	const int pos_config_len = 3;
-	int* ortn_config = new int[3];
-	ortn_config[0] = 4;
-	ortn_config[1] = 5;
-	ortn_config[2] = 7;
-	const int ortn_config_len = 3;
+//	int* pos_config = new int[3];
+//	pos_config[0] = 5;
+//	pos_config[1] = 6;
+//	pos_config[2] = 7;
+//	const int pos_config_len = 3;
+//	int* ortn_config = new int[3];
+//	ortn_config[0] = 4;
+//	ortn_config[1] = 5;
+//	ortn_config[2] = 7;
+//	const int ortn_config_len = 3;
 //	Configs configs;
 	configs.pos_config = pos_config;
 	configs.pos_config_len = pos_config_len;
@@ -1638,13 +1653,16 @@ template<typename Stream> void serialize_relative_position(Stream & stream,
 	}
 
 	serialize_bool(stream, all_small);
+//	printf("1\n");
 
 	if(all_small) {
 		serialize_int(stream, dx, 0, small_limit);
 		serialize_int(stream, dy, 0, small_limit);
 		serialize_int(stream, dz, 0, small_limit);
+//		printf("12\n");
 	} else {
 		serialize_bool(stream, too_large);
+//		printf("1\n");
 
 		if(!too_large) {
 			serialize_unsigned_range(stream, dx, config_len, config);
@@ -1654,6 +1672,7 @@ template<typename Stream> void serialize_relative_position(Stream & stream,
 			serialize_int(stream, dx, 0, max_delta);
 			serialize_int(stream, dy, 0, max_delta);
 			serialize_int(stream, dz, 0, max_delta);
+//			printf("33\n");
 		}
 	}
 
@@ -1862,7 +1881,7 @@ template<typename Stream> void serialize_snapshot_relative_to_baseline(
 				use_indices = true;
 		}
 	}
-
+//	printf("num changed:%i\n", num_changed);
 	if(Stream::IsWriting) {
 		DeltaCubeData* delta_cubes = new DeltaCubeData[num_changed];
 		int j = 0;
@@ -1878,19 +1897,19 @@ template<typename Stream> void serialize_snapshot_relative_to_baseline(
 
 		configs = select_configs(delta_cubes, num_changed);
 		delete[] delta_cubes;
-		printf("ortn:");
-		for(int i = 0; i < configs.ortn_config_len; i++) {
-			int x = configs.ortn_config[i];
-			printf("%i ", x);
-			continue;
-		}
-		printf("\npos:");
-		for(int i = 0; i < configs.pos_config_len; i++) {
-			int x = configs.pos_config[i];
-			printf("%i ", x);
-			continue;
-		}
-		printf("\n");
+//		printf("ortn:");
+//		for(int i = 0; i < configs.ortn_config_len; i++) {
+//			int x = configs.ortn_config[i];
+//			printf("%i ", x);
+//			continue;
+//		}
+//		printf("\npos:");
+//		for(int i = 0; i < configs.pos_config_len; i++) {
+//			int x = configs.pos_config[i];
+//			printf("%i ", x);
+//			continue;
+//		}
+//		printf("\n");
 	}
 
 //	serialize_configs(stream, configs);
