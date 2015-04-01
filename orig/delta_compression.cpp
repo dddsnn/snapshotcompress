@@ -1374,20 +1374,46 @@ int bits_required_config(int value, const Config& config) {
 
 template<typename Stream> void serialize_configs(Stream stream,
 		Configs& configs) {
-	serialize_bits(stream, configs.ortn_config_len, 10);
+	int ortn_config_len;
+	if(Stream::IsWriting) {
+		ortn_config_len = configs.ortn_config_len;
+	}
+	serialize_bits(stream, ortn_config_len, 10);
 	if(Stream::IsReading) {
+		configs.ortn_config_len = ortn_config_len;
 		configs.ortn_config = new int[configs.ortn_config_len];
 	}
 	for(int i = 0; i < configs.ortn_config_len; i++) {
-		serialize_bits(stream, configs.ortn_config[i], 10);
+		int setting;
+		if(Stream::IsWriting) {
+			setting = configs.ortn_config[i];
+		}
+		serialize_bits(stream, setting, 10);
+		if(Stream::IsReading) {
+			configs.ortn_config[i] = setting;
+		}
 	}
-	serialize_bits(stream, configs.pos_config_len, 10);
+
+	int pos_config_len;
+	if(Stream::IsWriting) {
+		pos_config_len = configs.pos_config_len;
+	}
+	serialize_bits(stream, pos_config_len, 10);
 	if(Stream::IsReading) {
+		configs.pos_config_len = pos_config_len;
 		configs.pos_config = new int[configs.pos_config_len];
 	}
 	for(int i = 0; i < configs.pos_config_len; i++) {
-		serialize_bits(stream, configs.pos_config[i], 10);
+		int setting;
+		if(Stream::IsWriting) {
+			setting = configs.pos_config[i];
+		}
+		serialize_bits(stream, setting, 10);
+		if(Stream::IsReading) {
+			configs.pos_config[i] = setting;
+		}
 	}
+
 }
 
 std::vector<Config> compute_config_permutations_internal(int num, int min_,
@@ -1458,18 +1484,14 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 	std::map<Config, int> ortn_sizes = std::map<Config, int>();
 	std::map<Config, int> static_overheads = std::map<Config, int>();
 
-	std::vector<Config> config_permutations = compute_config_permutations(9, 1,
+	std::vector<Config> config_permutations = compute_config_permutations(8, 1,
 			10, 4);
 	for(std::vector<Config>::iterator config = config_permutations.begin();
 			config != config_permutations.end(); config++) {
-//			if(config_len == 3 && config->at(0) == 5 && config->at(1) == 6
-//					&& config->at(2) == 7) {
-//				int y = 12;
-//			}
 		int pos_size = 0;
 		// static overhead for this config
-		// 4 bit for the length, 4 bit for each setting
-		int overhead = (1 + config->size()) * 4;
+		// 3 bit for the length, 4 bit for first, 2 for other settings
+		int overhead = 7 + (config->size() - 1) * 2;
 		static_overheads.insert(std::pair<Config, int>(*config, overhead));
 		std::vector<int> limits = compute_limits(*config);
 		// position
@@ -1579,12 +1601,9 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 		if(size < best_pos_size) {
 			best_pos_config = &pos_size->first;
 			best_pos_size = size;
-//			printf("config len: %lu, first setting: %i, size: %i\n",
-//					pos_size->first.size(), pos_size->first.front(),
-//					best_pos_size);
 		}
 	}
-	printf("pos :%i\n", pos_sizes[pos_handpicked] - best_pos_size);
+
 	Config ortn_handpicked(3);
 	ortn_handpicked[0] = 4;
 	ortn_handpicked[1] = 5;
@@ -1600,39 +1619,26 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 			best_ortn_size = size;
 		}
 	}
-	printf("ortn:%i\n\n", ortn_sizes[ortn_handpicked] - best_ortn_size);
 
-//	for(Config::const_iterator x = best_pos_config->begin();
-//			x != best_pos_config->end(); x++) {
-//		printf("%i ", *x);
-//	}
-//	printf("\n");
+	int *pos_config, *ortn_config;
+	int pos_config_len, ortn_config_len;
+	if(best_pos_size + best_ortn_size
+			< pos_sizes[pos_handpicked] + ortn_sizes[ortn_handpicked]) {
+//		printf("pos :%i\n", pos_sizes[pos_handpicked] - best_pos_size);
+//		printf("ortn:%i\n\n", ortn_sizes[ortn_handpicked] - best_ortn_size);
+		pos_config = new int[best_pos_config->size()];
+		std::copy(best_pos_config->begin(), best_pos_config->end(), pos_config);
+		pos_config_len = best_pos_config->size();
 
-	int* pos_config = new int[best_pos_config->size()];
-	std::copy(best_pos_config->begin(), best_pos_config->end(), pos_config);
-	const int pos_config_len = best_pos_config->size();
-
-	int* ortn_config = new int[best_ortn_config->size()];
-	std::copy(best_ortn_config->begin(), best_ortn_config->end(), ortn_config);
-	const int ortn_config_len = best_ortn_config->size();
+		ortn_config = new int[best_ortn_config->size()];
+		std::copy(best_ortn_config->begin(), best_ortn_config->end(),
+				ortn_config);
+		ortn_config_len = best_ortn_config->size();
+	} else {
+		pos_config_len = ortn_config_len = 0;
+		pos_config = ortn_config = nullptr;
+	}
 	Configs configs;
-//	configs.pos_config = pos_config;
-//	configs.pos_config_len = pos_config_len;
-//	configs.ortn_config = ortn_config;
-//	configs.ortn_config_len = ortn_config_len;
-//	return configs;
-
-//	int* pos_config = new int[3];
-//	pos_config[0] = 5;
-//	pos_config[1] = 6;
-//	pos_config[2] = 7;
-//	const int pos_config_len = 3;
-//	int* ortn_config = new int[3];
-//	ortn_config[0] = 4;
-//	ortn_config[1] = 5;
-//	ortn_config[2] = 7;
-//	const int ortn_config_len = 3;
-//	Configs configs;
 	configs.pos_config = pos_config;
 	configs.pos_config_len = pos_config_len;
 	configs.ortn_config = ortn_config;
@@ -1877,6 +1883,7 @@ template<typename Stream> void serialize_snapshot_relative_to_baseline(
 	const int MaxChanged = 256;
 
 	Configs configs;
+	bool use_configs = true;
 	int num_changed = 0;
 	bool use_indices = false;
 	bool changed[NumCubes];
@@ -1892,9 +1899,7 @@ template<typename Stream> void serialize_snapshot_relative_to_baseline(
 			if(num_changed <= MaxChanged && relative_index_bits <= NumCubes)
 				use_indices = true;
 		}
-	}
-//	printf("num changed:%i\n", num_changed);
-	if(Stream::IsWriting) {
+
 		DeltaCubeData* delta_cubes = new DeltaCubeData[num_changed];
 		int j = 0;
 		for(int i = 0; i < NumCubes; ++i) {
@@ -1909,36 +1914,69 @@ template<typename Stream> void serialize_snapshot_relative_to_baseline(
 
 		configs = select_configs(delta_cubes, num_changed);
 		delete[] delta_cubes;
-//		printf("ortn:");
-//		for(int i = 0; i < configs.ortn_config_len; i++) {
-//			int x = configs.ortn_config[i];
-//			printf("%i ", x);
-//			continue;
-//		}
-//		printf("\npos:");
-//		for(int i = 0; i < configs.pos_config_len; i++) {
-//			int x = configs.pos_config[i];
-//			printf("%i ", x);
-//			continue;
-//		}
-//		printf("\n");
+		if(configs.pos_config_len == 0 || configs.ortn_config_len == 0) {
+			use_configs = false;
+		}
 	}
 
-//	serialize_configs(stream, configs);
+	serialize_bool(stream, use_configs);
 
-	serialize_bits(stream, configs.ortn_config_len, 4);
-	if(Stream::IsReading) {
-		configs.ortn_config = new int[configs.ortn_config_len];
-	}
-	for(int i = 0; i < configs.ortn_config_len; i++) {
-		serialize_bits(stream, configs.ortn_config[i], 4);
-	}
-	serialize_bits(stream, configs.pos_config_len, 4);
-	if(Stream::IsReading) {
-		configs.pos_config = new int[configs.pos_config_len];
-	}
-	for(int i = 0; i < configs.pos_config_len; i++) {
-		serialize_bits(stream, configs.pos_config[i], 4);
+	if(use_configs) {
+		// no idea why this doesn't work
+		// serialize_configs(stream, configs);
+
+		int ortn_config_len;
+		if(Stream::IsWriting) {
+			ortn_config_len = configs.ortn_config_len - 1;
+		}
+		serialize_bits(stream, ortn_config_len, 3);
+		if(Stream::IsReading) {
+			configs.ortn_config_len = ortn_config_len + 1;
+			configs.ortn_config = new int[configs.ortn_config_len];
+		}
+		serialize_bits(stream, configs.ortn_config[0], 4);
+		for(int i = 1; i < configs.ortn_config_len; i++) {
+			int diff;
+			if(Stream::IsWriting) {
+				diff = configs.ortn_config[i] - configs.ortn_config[i - 1] - 1;
+			}
+			serialize_bits(stream, diff, 2);
+			if(Stream::IsReading) {
+				configs.ortn_config[i] = configs.ortn_config[i - 1] + diff + 1;
+			}
+		}
+
+		int pos_config_len;
+		if(Stream::IsWriting) {
+			pos_config_len = configs.pos_config_len - 1;
+		}
+		serialize_bits(stream, pos_config_len, 3);
+		if(Stream::IsReading) {
+			configs.pos_config_len = pos_config_len + 1;
+			configs.pos_config = new int[configs.pos_config_len];
+		}
+		serialize_bits(stream, configs.pos_config[0], 4);
+		for(int i = 1; i < configs.pos_config_len; i++) {
+			int diff;
+			if(Stream::IsWriting) {
+				diff = configs.pos_config[i] - configs.pos_config[i - 1] - 1;
+			}
+			serialize_bits(stream, diff, 2);
+			if(Stream::IsReading) {
+				configs.pos_config[i] = configs.pos_config[i - 1] + diff + 1;
+			}
+		}
+	} else {
+		configs.pos_config_len = 3;
+		configs.ortn_config_len = 3;
+		configs.pos_config = new int[3];
+		configs.ortn_config = new int[3];
+		configs.pos_config[0] = 5;
+		configs.pos_config[1] = 6;
+		configs.pos_config[2] = 7;
+		configs.ortn_config[0] = 4;
+		configs.ortn_config[1] = 5;
+		configs.ortn_config[2] = 7;
 	}
 
 	serialize_bool(stream, use_indices);
