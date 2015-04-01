@@ -1390,32 +1390,45 @@ template<typename Stream> void serialize_configs(Stream stream,
 	}
 }
 
-std::vector<Config> compute_config_permutations(int num, int min, int max,
-		int step) {
-	assert(min + (num - 1) * step <= max);
+std::vector<Config> compute_config_permutations_internal(int num, int min_,
+		int max, int max_step, int max_start) {
+	assert(num >= 1);
+	assert(max >= min_);
+	assert(max_step >= 1);
+	assert(min_ + num <= max + 1);
+
 	std::vector<Config> configs;
-	Config last(num);
-	Config first(num);
-	Config& previous = first;
-	for(int i = 0; i < num; i++) {
-		first[i] = min + (step * i);
-		last[i] = max - (step * (num - i - 1));
+	if(num == 1) {
+		for(int i = min_; i <= max; i++) {
+			Config config(num);
+			config[0] = i;
+			configs.push_back(config);
+		}
+		return configs;
 	}
-	configs.push_back(first);
-	while(previous != last) {
-		Config current(previous);
-		int i;
-		for(i = 1; i < num; i++) {
-			if(current[i] - current[i - 1] > step) {
-				current[i - 1] += 1;
-				break;
+	for(int start = 1; start <= min(max - num + 1, max_start); start++) {
+		std::vector<Config> appendices = compute_config_permutations_internal(
+				num - 1, 1, min(max - start, (num - 1) * max_step), max_step,
+				max_step);
+		for(auto appendix = appendices.begin(); appendix != appendices.end();
+				appendix++) {
+			Config config(num);
+			config[0] = start;
+			for(unsigned int j = 0; j < appendix->size(); j++) {
+				config[j + 1] = start + appendix->at(j);
 			}
+			configs.push_back(config);
 		}
-		if(i == num) {
-			current[num - 1] += 1;
-		}
-		configs.push_back(current);
-		previous = current;
+	}
+	return configs;
+}
+std::vector<Config> compute_config_permutations(int max_num, int min_, int max,
+		int max_step) {
+	std::vector<Config> configs;
+	for(int num = 1; num <= max_num; num++) {
+		std::vector<Config> c = compute_config_permutations_internal(num, min_,
+				max, max_step, max);
+		configs.insert(configs.end(), c.begin(), c.end());
 	}
 	return configs;
 }
@@ -1445,115 +1458,114 @@ Configs select_configs(const DeltaCubeData* delta_cubes, int num_changed) {
 	std::map<Config, int> ortn_sizes = std::map<Config, int>();
 	std::map<Config, int> static_overheads = std::map<Config, int>();
 
-	for(int config_len = 1; config_len < 9; config_len++) {
-		std::vector<Config> config_permutations = compute_config_permutations(
-				config_len, 1, 15, 1);
-		for(std::vector<Config>::iterator config = config_permutations.begin();
-				config != config_permutations.end(); config++) {
-			if(config_len == 3 && config->at(0) == 5 && config->at(1) == 6
-					&& config->at(2) == 7) {
-				int y = 12;
+	std::vector<Config> config_permutations = compute_config_permutations(9, 1,
+			10, 4);
+	for(std::vector<Config>::iterator config = config_permutations.begin();
+			config != config_permutations.end(); config++) {
+//			if(config_len == 3 && config->at(0) == 5 && config->at(1) == 6
+//					&& config->at(2) == 7) {
+//				int y = 12;
+//			}
+		int pos_size = 0;
+		// static overhead for this config
+		// 4 bit for the length, 4 bit for each setting
+		int overhead = (1 + config->size()) * 4;
+		static_overheads.insert(std::pair<Config, int>(*config, overhead));
+		std::vector<int> limits = compute_limits(*config);
+		// position
+		for(int i = 0; i < num_changed; i++) {
+			DeltaCubeData delta_cube = delta_cubes[i];
+			if(!delta_cube.position_changed) {
+				// position won't be serialized, continue
+				continue;
 			}
-			int pos_size = 0;
-			// static overhead for this config
-			// 4 bit for the length, 4 bit for each setting
-			int overhead = (1 + config->size()) * 4;
-			static_overheads.insert(std::pair<Config, int>(*config, overhead));
-			std::vector<int> limits = compute_limits(*config);
-			// position
-			for(int i = 0; i < num_changed; i++) {
-				DeltaCubeData delta_cube = delta_cubes[i];
-				if(!delta_cube.position_changed) {
-					// position won't be serialized, continue
+			// +1 for the all_small bool
+			pos_size += 1;
+			bool all_small;
+			bool too_large;
+			int dx, dy, dz;
+
+			const int small_limit = 15;
+			const int large_limit = unsigned_range_limit(config->size(),
+					*config);
+
+			const int max_delta = 2047;
+
+			dx = delta_cube.position_x;
+			dy = delta_cube.position_y;
+			dz = delta_cube.position_z;
+			all_small = dx <= small_limit && dy <= small_limit
+					&& dz <= small_limit;
+			too_large = dx >= large_limit || dy >= large_limit
+					|| dz >= large_limit;
+
+			if(all_small) {
+				pos_size += 3 * bits_required(0, small_limit);
+				continue;
+			} else {
+				// +1 for the too_large bool
+				pos_size += 1;
+
+				if(!too_large) {
+					pos_size += bits_required_config(dx, *config);
+					pos_size += bits_required_config(dy, *config);
+					pos_size += bits_required_config(dz, *config);
+					continue;
+				} else {
+					pos_size += 3 * bits_required(0, max_delta);
 					continue;
 				}
-				// +1 for the all_small bool
-				pos_size += 1;
-				bool all_small;
-				bool too_large;
-				int dx, dy, dz;
+			}
+		}
+		pos_sizes.insert(std::pair<Config, int>(*config, pos_size));
+		int ortn_size = 0;
+		// orientation
+		for(int i = 0; i < num_changed; i++) {
+			DeltaCubeData delta_cube = delta_cubes[i];
+			// start out with 1 bit for relative_orientation
+			ortn_size += 1;
+			const int small_limit = 3;
+			const int large_limit = unsigned_range_limit(config->size(),
+					*config);
 
-				const int small_limit = 15;
-				const int large_limit = unsigned_range_limit(config_len,
-						*config);
+			int da, db, dc;
+			bool all_small = false;
+			bool relative_orientation = false;
 
-				const int max_delta = 2047;
+			if(delta_cube.orientation_largest == 0) {
+				da = delta_cube.orientation_a;
+				db = delta_cube.orientation_b;
+				dc = delta_cube.orientation_c;
 
-				dx = delta_cube.position_x;
-				dy = delta_cube.position_y;
-				dz = delta_cube.position_z;
-				all_small = dx <= small_limit && dy <= small_limit
-						&& dz <= small_limit;
-				too_large = dx >= large_limit || dy >= large_limit
-						|| dz >= large_limit;
+				all_small = da <= small_limit && db <= small_limit
+						&& dc <= small_limit;
+
+				relative_orientation = da < large_limit && db < large_limit
+						&& dc < large_limit;
+			}
+
+			if(relative_orientation) {
+				// +1 for all_small
+				ortn_size += 1;
 
 				if(all_small) {
-					pos_size += 3 * bits_required(0, small_limit);
+					ortn_size += 3 * bits_required(0, small_limit);
 					continue;
 				} else {
-					// +1 for the too_large bool
-					pos_size += 1;
-
-					if(!too_large) {
-						pos_size += bits_required_config(dx, *config);
-						pos_size += bits_required_config(dy, *config);
-						pos_size += bits_required_config(dz, *config);
-						continue;
-					} else {
-						pos_size += 3 * bits_required(0, max_delta);
-						continue;
-					}
-				}
-			}
-			pos_sizes.insert(std::pair<Config, int>(*config, pos_size));
-			int ortn_size = 0;
-			// orientation
-			for(int i = 0; i < num_changed; i++) {
-				DeltaCubeData delta_cube = delta_cubes[i];
-				// start out with 1 bit for relative_orientation
-				ortn_size += 1;
-				const int small_limit = 3;
-				const int large_limit = unsigned_range_limit(config_len,
-						*config);
-
-				int da, db, dc;
-				bool all_small = false;
-				bool relative_orientation = false;
-
-				if(delta_cube.orientation_largest == 0) {
-					da = delta_cube.orientation_a;
-					db = delta_cube.orientation_b;
-					dc = delta_cube.orientation_c;
-
-					all_small = da <= small_limit && db <= small_limit
-							&& dc <= small_limit;
-
-					relative_orientation = da < large_limit && db < large_limit
-							&& dc < large_limit;
-				}
-
-				if(relative_orientation) {
-					// +1 for all_small
-					ortn_size += 1;
-
-					if(all_small) {
-						ortn_size += 3 * bits_required(0, small_limit);
-						continue;
-					} else {
-						ortn_size += bits_required_config(da, *config);
-						ortn_size += bits_required_config(db, *config);
-						ortn_size += bits_required_config(dc, *config);
-						continue;
-					}
-				} else {
-					// size for full orientation
-					ortn_size += 29;
+					ortn_size += bits_required_config(da, *config);
+					ortn_size += bits_required_config(db, *config);
+					ortn_size += bits_required_config(dc, *config);
 					continue;
 				}
+			} else {
+				// size for full orientation
+				ortn_size += 29;
+				continue;
 			}
-			ortn_sizes.insert(std::pair<Config, int>(*config, ortn_size));
 		}
+		ortn_sizes.insert(std::pair<Config, int>(*config, ortn_size));
 	}
+
 	Config pos_handpicked(3);
 	pos_handpicked[0] = 5;
 	pos_handpicked[1] = 6;
@@ -2083,7 +2095,8 @@ int main(int argc, char ** argv) {
 	uint64_t file_size = ftell(file);
 	fseek(file, 0L, SEEK_SET);
 
-	const int num_frames = (int) floor(double(file_size) / sizeof(Frame));
+	const unsigned int num_frames = (unsigned int) floor(
+			double(file_size) / sizeof(Frame));
 	printf("%d input frames\n", num_frames);
 	assert(num_frames > 6);
 
@@ -2097,7 +2110,7 @@ int main(int argc, char ** argv) {
 // convert frames to snapshots
 
 	QuantizedSnapshot * snapshots = new QuantizedSnapshot[num_frames];
-	for(int i = 0; i < num_frames; ++i)
+	for(unsigned int i = 0; i < num_frames; ++i)
 		convert_frame_to_snapshot(frames[i], snapshots[i]);
 
 // write packets
@@ -2111,7 +2124,7 @@ int main(int argc, char ** argv) {
 	int packet_index = 0;
 	Packet * packets = new Packet[num_packets];
 	uint64_t total_bytes = 0;
-	for(int i = 6; i < num_frames; ++i) {
+	for(unsigned int i = 6; i < num_frames; ++i) {
 		Packet & packet = packets[packet_index];
 
 		WriteStream stream(packet.data, MaxPacketSize);
@@ -2161,7 +2174,7 @@ int main(int argc, char ** argv) {
 
 // print results
 
-	printf("total packet bytes: %llu\n", total_bytes);
+	printf("total packet bytes: %lu\n", total_bytes);
 	printf("average bytes per-packet: %f\n", total_bytes / double(num_packets));
 	printf("average bytes per-second: %f\n",
 			total_bytes / double(num_packets) * 60 * 8);
